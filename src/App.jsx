@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import {io} from "socket.io-client";
 import {
   Send,
   Code,
@@ -27,6 +28,7 @@ function App() {
         '👋 Hello! I\'m your AI Website Builder assistant. I can help you create beautiful, responsive websites with HTML, CSS, and JavaScript.\n\n🚀 **What I can build for you:**\n• Landing pages\n• Portfolio websites\n• E-commerce showcases\n• Dashboard interfaces\n• Interactive web apps\n\n💡 **Just tell me what you want to create!**\n\nExample: "Create a modern landing page for a tech startup" or "Build a portfolio website with dark theme"',
     },
   ]);
+  const [socket, setSocket] = useState(null);
   const [inputMessage, setInputMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [codePreview, setCodePreview] = useState(null);
@@ -56,7 +58,7 @@ function App() {
     return () => clearTimeout(timer);
   }, [codePreview, activeTab, messages]);
 
-  // Enhanced code extraction with multiple patterns
+  // Enhanced code extraction with multiple patterns for real-time processing
   const extractCode = (content) => {
     const codeBlocks = {
       html: "",
@@ -64,53 +66,76 @@ function App() {
       js: "",
     };
 
-    // Enhanced regex patterns for better matching
+    // Enhanced regex patterns for better real-time matching
     const htmlPatterns = [
-      /```html\n([\s\S]*?)```/i,
-      /```HTML\n([\s\S]*?)```/i,
-      /```markup\n([\s\S]*?)```/i,
-      /```\n(<!DOCTYPE html[\s\S]*?)```/i,
+      /```html\n([\s\S]*?)```/gi,
+      /```HTML\n([\s\S]*?)```/gi,
+      /```markup\n([\s\S]*?)```/gi,
+      /```\n(<!DOCTYPE html[\s\S]*?)```/gi,
+      /```html\n([\s\S]*?)$/gi, // For incomplete blocks during streaming
+      /```HTML\n([\s\S]*?)$/gi,
     ];
 
     const cssPatterns = [
-      /```css\n([\s\S]*?)```/i,
-      /```CSS\n([\s\S]*?)```/i,
-      /```\n(:root[\s\S]*?)```/i,
-      /```\n(\*[\s\S]*?)```/i,
+      /```css\n([\s\S]*?)```/gi,
+      /```CSS\n([\s\S]*?)```/gi,
+      /```\n(\*[\s\S]*?\{[\s\S]*?)```/gi,
+      /```\n(:root[\s\S]*?)```/gi,
+      /```css\n([\s\S]*?)$/gi, // For incomplete blocks during streaming
+      /```CSS\n([\s\S]*?)$/gi,
     ];
 
     const jsPatterns = [
-      /```javascript\n([\s\S]*?)```/i,
-      /```js\n([\s\S]*?)```/i,
-      /```JavaScript\n([\s\S]*?)```/i,
-      /```\n(document\.[\s\S]*?)```/i,
-      /```\n(window\.[\s\S]*?)```/i,
+      /```javascript\n([\s\S]*?)```/gi,
+      /```js\n([\s\S]*?)```/gi,
+      /```JavaScript\n([\s\S]*?)```/gi,
+      /```\n(document\.[\s\S]*?)```/gi,
+      /```\n(window\.[\s\S]*?)```/gi,
+      /```\n(function[\s\S]*?)```/gi,
+      /```javascript\n([\s\S]*?)$/gi, // For incomplete blocks during streaming
+      /```js\n([\s\S]*?)$/gi,
     ];
 
-    // Try HTML patterns
+    // Extract HTML with all matches
     for (const pattern of htmlPatterns) {
-      const match = content.match(pattern);
-      if (match && match[1]) {
-        codeBlocks.html = match[1].trim();
-        break;
+      const matches = [...content.matchAll(pattern)];
+      if (matches.length > 0) {
+        // Get the longest/most complete match
+        const bestMatch = matches.reduce((longest, current) => 
+          (current[1] && current[1].length > (longest[1]?.length || 0)) ? current : longest
+        );
+        if (bestMatch && bestMatch[1]) {
+          codeBlocks.html = bestMatch[1].trim();
+          break;
+        }
       }
     }
 
-    // Try CSS patterns
+    // Extract CSS with all matches
     for (const pattern of cssPatterns) {
-      const match = content.match(pattern);
-      if (match && match[1]) {
-        codeBlocks.css = match[1].trim();
-        break;
+      const matches = [...content.matchAll(pattern)];
+      if (matches.length > 0) {
+        const bestMatch = matches.reduce((longest, current) => 
+          (current[1] && current[1].length > (longest[1]?.length || 0)) ? current : longest
+        );
+        if (bestMatch && bestMatch[1]) {
+          codeBlocks.css = bestMatch[1].trim();
+          break;
+        }
       }
     }
 
-    // Try JavaScript patterns
+    // Extract JavaScript with all matches
     for (const pattern of jsPatterns) {
-      const match = content.match(pattern);
-      if (match && match[1]) {
-        codeBlocks.js = match[1].trim();
-        break;
+      const matches = [...content.matchAll(pattern)];
+      if (matches.length > 0) {
+        const bestMatch = matches.reduce((longest, current) => 
+          (current[1] && current[1].length > (longest[1]?.length || 0)) ? current : longest
+        );
+        if (bestMatch && bestMatch[1]) {
+          codeBlocks.js = bestMatch[1].trim();
+          break;
+        }
       }
     }
 
@@ -140,6 +165,98 @@ function App() {
       </html>
     `;
   };
+  
+  useEffect(() => {
+    const socketInstance = io("https://ai-website-builder-backend-jcc3.onrender.com");
+    setSocket(socketInstance);
+  
+    let accumulatedMessage = "";
+  
+    // Listen for streamed chunks with real-time code extraction and formatting
+    socketInstance.on("ai-message-chunk", (chunk) => {
+      if(isLoading) setIsLoading(false);
+      accumulatedMessage += chunk;
+  
+      // Real-time code extraction from accumulated content
+      const codeBlocks = extractCode(accumulatedMessage);
+      
+      // Update code preview in real-time if any code is detected
+      if (codeBlocks.html || codeBlocks.css || codeBlocks.js) {
+        const preview = generatePreview(
+          codeBlocks.html,
+          codeBlocks.css,
+          codeBlocks.js
+        );
+        setCodePreview({
+          html: codeBlocks.html,
+          css: codeBlocks.css,
+          js: codeBlocks.js,
+          preview: preview,
+        });
+        
+        // Auto-open preview panel when code is detected
+        setIsPreviewOpen(true);
+        setActiveTab("code");
+      }
+  
+      // Update UI with live streaming message
+      setMessages((prevMessages) => {
+        const lastMsg = prevMessages[prevMessages.length - 1];
+        if (lastMsg?.type === "assistant" && lastMsg.isStreaming) {
+          return [
+            ...prevMessages.slice(0, -1),
+            { ...lastMsg, content: accumulatedMessage },
+          ];
+        } else {
+          return [
+            ...prevMessages,
+            { 
+              id: Date.now() + 1, 
+              type: "assistant", 
+              content: accumulatedMessage, 
+              isStreaming: true 
+              },
+          ];
+        }
+      });
+    });
+  
+    // Final complete AI message - just finalize without reprocessing
+    socketInstance.on("ai-message-complete", (message) => {
+      // Final code extraction to ensure completeness
+      const finalCodeBlocks = extractCode(message || accumulatedMessage);
+      
+      // Update with final code if it's more complete
+      if (finalCodeBlocks.html || finalCodeBlocks.css || finalCodeBlocks.js) {
+        const preview = generatePreview(
+          finalCodeBlocks.html,
+          finalCodeBlocks.css,
+          finalCodeBlocks.js
+        );
+        setCodePreview({
+          html: finalCodeBlocks.html,
+          css: finalCodeBlocks.css,
+          js: finalCodeBlocks.js,
+          preview: preview,
+        });
+      }
+  
+      // Finalize the assistant message
+      setMessages((prevMessages) =>
+        prevMessages.map((msg) =>
+          msg.isStreaming ? { ...msg, content: message || accumulatedMessage, isStreaming: false } : msg
+        )
+      );
+      
+      // Reset for next conversation
+      accumulatedMessage = "";
+      setIsLoading(false);
+    });
+  
+    return () => {
+      socketInstance.disconnect();
+    };
+  }, []); 
 
   const publishWebsite = async () => {
     if (!codePreview) {
@@ -195,54 +312,8 @@ function App() {
     setMessages((prev) => [...prev, userMessage]);
     setInputMessage("");
     setIsLoading(true);
-
-    try {
-      const response = await fetch("https://ai-website-builder-backend-jcc3.onrender.com/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: inputMessage }),
-      });
-
-      if (!response.ok) throw new Error("Network response was not ok");
-
-      const data = await response.json();
-      const assistantMessage = {
-        id: Date.now() + 1,
-        type: "assistant",
-        content: data.response || "No response received",
-      };
-
-      setMessages((prev) => [...prev, assistantMessage]);
-
-      const codeBlocks = extractCode(data.response || "");
-      if (codeBlocks.html || codeBlocks.css || codeBlocks.js) {
-        const preview = generatePreview(
-          codeBlocks.html,
-          codeBlocks.css,
-          codeBlocks.js
-        );
-        setCodePreview({
-          html: codeBlocks.html,
-          css: codeBlocks.css,
-          js: codeBlocks.js,
-          preview: preview,
-        });
-        setIsPreviewOpen(true);
-        setActiveTab("code");
-      }
-    } catch (error) {
-      console.error("Error:", error);
-      const errorMessage = {
-        id: Date.now() + 1,
-        type: "assistant",
-        content:
-          "🚨 **Connection Error**\n\nI'm having trouble connecting to the server. Please:\n\n🔄 **Try again in a moment**\n🔧 **Check if the server is running**\n🌐 **Verify your internet connection**\n\nIf the problem persists, please refresh the page.",
-      };
-      setMessages((prev) => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    socket.emit("message", inputMessage.trim());
+  }
 
   const handleKeyPress = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -251,70 +322,87 @@ function App() {
     }
   };
 
-  // Code formatting helper
+  // Enhanced code formatting helper with better real-time formatting
   const formatCode = (code, language) => {
     if (!code) return "";
 
     if (language === "markup" || language === "html") {
-      // Basic HTML formatting
-      return code
+      // Enhanced HTML formatting for real-time display
+      let formatted = code
         .replace(/></g, ">\n<")
         .replace(/(\s{2,})/g, " ")
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0)
-        .map((line, index, array) => {
-          // Simple indentation logic
-          const openTags = (line.match(/</g) || []).length;
-          const closeTags = (line.match(/>/g) || []).length;
-          const selfClosing = line.includes("/>");
+        .trim();
 
-          if (line.startsWith("<!")) return line;
-          if (line.startsWith("</")) return line;
-
-          const indent = Math.max(0, (openTags - closeTags) * 2);
-          return " ".repeat(indent) + line;
-        })
-        .join("\n");
+      // Basic indentation
+      const lines = formatted.split("\n");
+      let indentLevel = 0;
+      return lines.map(line => {
+        const trimmed = line.trim();
+        if (!trimmed) return "";
+        
+        if (trimmed.startsWith("</")) {
+          indentLevel = Math.max(0, indentLevel - 1);
+        }
+        
+        const indented = "  ".repeat(indentLevel) + trimmed;
+        
+        if (trimmed.startsWith("<") && !trimmed.startsWith("</") && !trimmed.endsWith("/>")) {
+          indentLevel++;
+        }
+        
+        return indented;
+      }).join("\n");
     }
 
     if (language === "css") {
-      // Basic CSS formatting
+      // Enhanced CSS formatting for real-time display
       return code
-        .replace(/;/g, ";\n")
-        .replace(/{/g, " {\n")
-        .replace(/}/g, "\n}\n")
+        .replace(/\{/g, " {\n")
+        .replace(/\}/g, "\n}\n")
+        .replace(/;(?![^{]*\})/g, ";\n")
         .split("\n")
-        .map((line, index, array) => {
+        .map(line => {
           const trimmed = line.trim();
-          if (trimmed === "") return "";
-          if (trimmed.endsWith("{")) return trimmed;
-          if (trimmed === "}") return trimmed;
-          if (
-            trimmed.startsWith("/*") ||
-            trimmed.startsWith("*") ||
-            trimmed.endsWith("*/")
-          )
-            return trimmed;
+          if (!trimmed) return "";
+          if (trimmed.endsWith("{") || trimmed === "}") return trimmed;
+          if (trimmed.startsWith("/*") || trimmed.startsWith("*") || trimmed.endsWith("*/")) return trimmed;
           return "  " + trimmed;
         })
-        .filter((line) => line !== "")
+        .filter(line => line !== "")
+        .join("\n");
+    }
+
+    if (language === "javascript" || language === "js") {
+      // Basic JavaScript formatting
+      return code
+        .replace(/\{/g, " {\n")
+        .replace(/\}/g, "\n}\n")
+        .replace(/;(?![^{]*\})/g, ";\n")
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => line !== "")
         .join("\n");
     }
 
     return code;
   };
 
-  // Enhanced CodeBlock for chat messages
+  // Enhanced CodeBlock for chat messages with real-time syntax highlighting
   const CodeBlock = ({ language, code }) => {
     const codeRef = useRef(null);
     const [copied, setCopied] = useState(false);
 
     useEffect(() => {
-      if (codeRef.current && window.Prism) {
+      if (codeRef.current && window.Prism && code) {
         const formattedCode = formatCode(code, language);
         codeRef.current.textContent = formattedCode;
-        window.Prism.highlightElement(codeRef.current);
+        
+        // Apply syntax highlighting
+        setTimeout(() => {
+          if (codeRef.current) {
+            window.Prism.highlightElement(codeRef.current);
+          }
+        }, 10);
       }
     }, [code, language]);
 
@@ -325,7 +413,6 @@ function App() {
         setTimeout(() => setCopied(false), 2000);
       } catch (err) {
         console.error("Failed to copy code:", err);
-        // Fallback for older browsers
         const textArea = document.createElement("textarea");
         textArea.value = code;
         document.body.appendChild(textArea);
@@ -336,6 +423,8 @@ function App() {
         setTimeout(() => setCopied(false), 2000);
       }
     };
+
+    if (!code) return null;
 
     return (
       <div className="bg-gray-800 rounded-lg my-2 lg:my-3 border border-gray-700 overflow-hidden">
@@ -356,9 +445,7 @@ function App() {
           <pre className="text-xs sm:text-sm leading-relaxed">
             <code
               ref={codeRef}
-              className={`language-${
-                language === "markup" ? "html" : language
-              }`}
+              className={`language-${language === "markup" ? "html" : language}`}
             >
               {code}
             </code>
@@ -368,16 +455,22 @@ function App() {
     );
   };
 
-  // Enhanced PrismCodeBlock for preview panel
+  // Enhanced PrismCodeBlock for preview panel with better real-time updates
   const PrismCodeBlock = ({ language, code, title }) => {
     const codeRef = useRef(null);
     const [copied, setCopied] = useState(false);
 
     useEffect(() => {
-      if (codeRef.current && window.Prism) {
+      if (codeRef.current && window.Prism && code) {
         const formattedCode = formatCode(code, language);
         codeRef.current.textContent = formattedCode;
-        window.Prism.highlightElement(codeRef.current);
+        
+        // Apply syntax highlighting with a small delay for better performance
+        setTimeout(() => {
+          if (codeRef.current) {
+            window.Prism.highlightElement(codeRef.current);
+          }
+        }, 50);
       }
     }, [code, language]);
 
@@ -388,7 +481,6 @@ function App() {
         setTimeout(() => setCopied(false), 2000);
       } catch (err) {
         console.error("Failed to copy code:", err);
-        // Fallback
         const textArea = document.createElement("textarea");
         textArea.value = code;
         document.body.appendChild(textArea);
@@ -399,6 +491,8 @@ function App() {
         setTimeout(() => setCopied(false), 2000);
       }
     };
+
+    if (!code) return null;
 
     return (
       <div className="mb-4 lg:mb-6">
@@ -420,9 +514,7 @@ function App() {
             <pre className="text-xs sm:text-sm leading-relaxed">
               <code
                 ref={codeRef}
-                className={`language-${
-                  language === "markup" ? "html" : language
-                }`}
+                className={`language-${language === "markup" ? "html" : language}`}
               >
                 {code}
               </code>
@@ -433,12 +525,17 @@ function App() {
     );
   };
 
-  // Enhanced message formatting
+  // Enhanced message formatting with real-time code block detection
   const formatMessageContent = (content) => {
-    const codeBlockPattern = /```(\w+)?\n([\s\S]*?)```/g;
+    if (!content) return [];
+
+    const codeBlockPattern = /```(\w+)?\n?([\s\S]*?)```/g;
     const parts = [];
     let lastIndex = 0;
     let match;
+
+    // Reset regex
+    codeBlockPattern.lastIndex = 0;
 
     while ((match = codeBlockPattern.exec(content)) !== null) {
       // Add text before code block
@@ -449,12 +546,17 @@ function App() {
         }
       }
 
-      // Add code block
-      parts.push({
-        type: "code",
-        language: match[1] || "text",
-        content: match[2].trim(),
-      });
+      // Add code block with proper language detection
+      const language = match[1] || "text";
+      const code = match[2] ? match[2].trim() : "";
+      
+      if (code) {
+        parts.push({
+          type: "code",
+          language: language,
+          content: code,
+        });
+      }
 
       lastIndex = match.index + match[0].length;
     }
@@ -475,10 +577,14 @@ function App() {
     return parts.map((part, index) => {
       if (part.type === "code") {
         return (
-          <CodeBlock key={index} language={part.language} code={part.content} />
+          <CodeBlock 
+            key={`code-${index}`} 
+            language={part.language} 
+            code={part.content} 
+          />
         );
       } else {
-        // Process text content for formatting
+        // Enhanced text formatting
         const textParts = part.content.split(
           /(\*\*[^*]+\*\*|\*[^*]+\*|🎉|🚀|💡|✅|❌|🔧|🔗|📱|🌐|🔄|🚨|https?:\/\/[^\s]+)/
         );
@@ -572,6 +678,12 @@ function App() {
       return (
         <div key={message.id} className="flex justify-start mb-4 lg:mb-6">
           <div className="bg-white text-gray-800 px-3 sm:px-4 py-3 sm:py-4 rounded-lg max-w-[85%] sm:max-w-xs lg:max-w-2xl xl:max-w-4xl shadow-md border border-gray-200">
+            {message.isStreaming && (
+              <div className="flex items-center space-x-2 mb-2">
+                <div className="animate-pulse bg-blue-500 h-2 w-2 rounded-full"></div>
+                <span className="text-xs text-gray-500">AI is typing...</span>
+              </div>
+            )}
             <div className="prose prose-sm max-w-none">
               {formatMessageContent(message.content)}
             </div>
@@ -751,6 +863,11 @@ function App() {
               <h2 className="text-base sm:text-lg font-semibold text-gray-800 flex items-center">
                 <Code size={16} className="mr-1 sm:mr-2" />
                 Code Preview
+                {codePreview && (codePreview.html || codePreview.css || codePreview.js) && (
+                  <span className="ml-2 text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
+                    Live
+                  </span>
+                )}
               </h2>
 
               {/* Close button for mobile */}
@@ -816,7 +933,7 @@ function App() {
 
           {/* Preview Content */}
           <div className="flex-1 flex flex-col overflow-hidden">
-            {/* Code Display with Prism.js */}
+            {/* Code Display with Enhanced Prism.js */}
             {activeTab === "code" && (
               <div className="flex-1 overflow-y-auto p-3 sm:p-4 bg-gray-900">
                 {codePreview.html && (
@@ -847,7 +964,7 @@ function App() {
                         size={36}
                         className="mx-auto mb-4 opacity-50 sm:w-12 sm:h-12"
                       />
-                      <p className="text-sm sm:text-base">No code to display</p>
+                      <p className="text-sm sm:text-base">Waiting for code...</p>
                     </div>
                   </div>
                 )}
@@ -860,15 +977,25 @@ function App() {
                 <div className="bg-gray-50 p-2 border-b border-gray-200">
                   <span className="text-xs sm:text-sm text-gray-600 flex items-center">
                     <Eye size={14} className="mr-1" />
-                    Live Preview
+                    Live Preview - Updates in Real Time
                   </span>
                 </div>
-                <iframe
-                  srcDoc={codePreview.preview}
-                  title="preview"
-                  className="w-full h-full border-none"
-                  sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-                />
+                {codePreview.preview ? (
+                  <iframe
+                    key={codePreview.preview} // Force re-render on content change
+                    srcDoc={codePreview.preview}
+                    title="preview"
+                    className="w-full h-full border-none"
+                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-gray-400">
+                    <div className="text-center">
+                      <Eye size={36} className="mx-auto mb-4 opacity-50" />
+                      <p className="text-sm sm:text-base">Waiting for preview...</p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -879,14 +1006,3 @@ function App() {
 }
 
 export default App;
-
-
-// "Create a modern digital marketing agency website with multiple pages"
-
-// "Build a complete portfolio website for a freelance photographer"
-
-// "Design a SaaS product landing page with pricing and features"
-
-// "Create a restaurant website with menu, about, and reservation system"
-
-// "Build a consulting firm website with services and case studies"
